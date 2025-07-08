@@ -1632,23 +1632,69 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
     ) -> BackendResult {
         let level = back::Level(1);
 
-        writeln!(
-            self.out,
-            "{level}if (all(__local_invocation_id == uint3(0u, 0u, 0u))) {{"
-        )?;
-
+        // Each thread initializes its own elements to avoid race conditions
         let vars = module.global_variables.iter().filter(|&(handle, var)| {
             !func_ctx.info[handle].is_empty() && var.space == crate::AddressSpace::WorkGroup
         });
 
         for (handle, var) in vars {
             let name = &self.names[&NameKey::GlobalVariable(handle)];
-            write!(self.out, "{}{} = ", level.next(), name)?;
-            self.write_default_init(module, var.ty)?;
-            writeln!(self.out, ";")?;
+
+            // For arrays, each thread initializes its own element(s)
+            match module.types[var.ty].inner {
+                TypeInner::Array { base, size, .. } => {
+                    // Each thread initializes elements based on thread ID
+                    match size {
+                        crate::ArraySize::Constant(len) => {
+                            writeln!(
+                                self.out,
+                                "{level}if (__local_invocation_id.x < {}) {{",
+                                len.get()
+                            )?;
+                            writeln!(
+                                self.out,
+                                "{}{}[__local_invocation_id.x] = ",
+                                level.next(),
+                                name
+                            )?;
+                            self.write_default_init(module, base)?;
+                            writeln!(self.out, ";")?;
+                            writeln!(self.out, "{level}}}")?;
+                        }
+                        crate::ArraySize::Dynamic => {
+                            // For dynamic arrays, we can't do per-thread init
+                            // Fall back to thread 0 initialization
+                            writeln!(
+                                self.out,
+                                "{level}if (all(__local_invocation_id == uint3(0u, 0u, 0u))) {{"
+                            )?;
+                            write!(self.out, "{}{} = ", level.next(), name)?;
+                            self.write_default_init(module, var.ty)?;
+                            writeln!(self.out, ";")?;
+                            writeln!(self.out, "{level}}}")?;
+                        }
+                        crate::ArraySize::Pending(_) => {
+                            // Pending sizes should be resolved by this point
+                            return Err(Error::Unimplemented(
+                                "workgroup array with pending size".to_string(),
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    // Non-array types: only thread 0 initializes
+                    writeln!(
+                        self.out,
+                        "{level}if (all(__local_invocation_id == uint3(0u, 0u, 0u))) {{"
+                    )?;
+                    write!(self.out, "{}{} = ", level.next(), name)?;
+                    self.write_default_init(module, var.ty)?;
+                    writeln!(self.out, ";")?;
+                    writeln!(self.out, "{level}}}")?;
+                }
+            }
         }
 
-        writeln!(self.out, "{level}}}")?;
         self.write_control_barrier(crate::Barrier::WORK_GROUP, level)
     }
 

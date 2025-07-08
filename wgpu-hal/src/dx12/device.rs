@@ -48,6 +48,7 @@ impl super::Device {
         library: &Arc<D3D12Lib>,
         memory_budget_thresholds: wgt::MemoryBudgetThresholds,
         compiler_container: Arc<shader_compilation::CompilerContainer>,
+        workarounds: super::Workarounds,
     ) -> Result<Self, crate::DeviceError> {
         if private_caps
             .instance_flags
@@ -156,6 +157,7 @@ impl super::Device {
             )?,
             sampler_heap: super::sampler::SamplerHeap::new(&raw, &private_caps)?,
             private_caps,
+            workarounds,
         };
 
         let mut rtv_pool =
@@ -1392,6 +1394,11 @@ impl crate::Device for super::Device {
                 sampler_heap_target,
                 sampler_buffer_binding_map,
                 force_loop_bounding: true,
+                warp_buffer_size_workaround: {
+                    let enabled = self.shared.workarounds.avoid_buffer_size_query;
+                    log::info!("WARP buffer size workaround enabled: {}", enabled);
+                    enabled
+                },
             },
         })
     }

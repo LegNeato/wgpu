@@ -118,7 +118,9 @@ impl super::Adapter {
             device_type: if Dxgi::DXGI_ADAPTER_FLAG(desc.Flags as i32)
                 .contains(Dxgi::DXGI_ADAPTER_FLAG_SOFTWARE)
             {
+                log::info!("WARP adapter detected, enabling workarounds");
                 workarounds.avoid_cpu_descriptor_overwrites = true;
+                workarounds.avoid_buffer_size_query = true;
                 wgt::DeviceType::Cpu
             } else if features_architecture.UMA.as_bool() {
                 wgt::DeviceType::IntegratedGpu
@@ -701,6 +703,7 @@ impl crate::Adapter for super::Adapter {
             &self.library,
             self.memory_budget_thresholds,
             self.compiler_container.clone(),
+            self.workarounds,
         )?;
         Ok(crate::OpenDevice {
             device,

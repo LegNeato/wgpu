@@ -4114,14 +4114,21 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                     crate::AddressSpace::Storage { access } => access,
                     _ => crate::StorageAccess::default(),
                 };
-                let wrapped_array_length = WrappedArrayLength {
-                    writable: storage_access.contains(crate::StorageAccess::STORE),
-                };
+                if self.options.warp_buffer_size_workaround {
+                    // WARP workaround: assume a large fixed size instead of querying GetDimensions
+                    // Using a very large value (1MB) to ensure we don't limit valid accesses
+                    log::debug!("HLSL: Applying WARP buffer size workaround for array length");
+                    write!(self.out, "((1048576) - {offset}) / {stride}")?
+                } else {
+                    let wrapped_array_length = WrappedArrayLength {
+                        writable: storage_access.contains(crate::StorageAccess::STORE),
+                    };
 
-                write!(self.out, "((")?;
-                self.write_wrapped_array_length_function_name(wrapped_array_length)?;
-                let var_name = &self.names[&NameKey::GlobalVariable(var_handle)];
-                write!(self.out, "({var_name}) - {offset}) / {stride})")?
+                    write!(self.out, "((")?;
+                    self.write_wrapped_array_length_function_name(wrapped_array_length)?;
+                    let var_name = &self.names[&NameKey::GlobalVariable(var_handle)];
+                    write!(self.out, "({var_name}) - {offset}) / {stride})")?
+                }
             }
             Expression::Derivative { axis, ctrl, expr } => {
                 use crate::{DerivativeAxis as Axis, DerivativeControl as Ctrl};

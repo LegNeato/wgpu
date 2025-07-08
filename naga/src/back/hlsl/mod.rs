@@ -383,6 +383,9 @@ pub struct Options {
     /// If set, loops will have code injected into them, forcing the compiler
     /// to think the number of iterations is bounded.
     pub force_loop_bounding: bool,
+    /// If set, works around WARP driver bug where GetDimensions returns incorrect buffer sizes.
+    /// This will cause ArrayLength to always return a large value (1024) instead of using GetDimensions.
+    pub warp_buffer_size_workaround: bool,
 }
 
 impl Default for Options {
@@ -399,6 +402,7 @@ impl Default for Options {
             zero_initialize_workgroup_memory: true,
             restrict_indexing: true,
             force_loop_bounding: true,
+            warp_buffer_size_workaround: false,
         }
     }
 }

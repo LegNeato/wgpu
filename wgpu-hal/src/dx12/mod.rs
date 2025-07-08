@@ -581,11 +581,13 @@ struct PrivateCapabilities {
     max_sampler_descriptor_heap_size: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct Workarounds {
     // On WARP, temporary CPU descriptors are still used by the runtime
     // after we call `CopyDescriptors`.
     avoid_cpu_descriptor_overwrites: bool,
+    // On WARP, GetDimensions may return incorrect buffer sizes
+    avoid_buffer_size_query: bool,
 }
 
 pub struct Adapter {
@@ -646,6 +648,7 @@ struct DeviceShared {
     heap_views: descriptor::GeneralHeap,
     sampler_heap: sampler::SamplerHeap,
     private_caps: PrivateCapabilities,
+    workarounds: Workarounds,
 }
 
 unsafe impl Send for DeviceShared {}

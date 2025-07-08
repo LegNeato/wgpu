@@ -1546,12 +1546,14 @@ impl<W: Write> super::Writer<'_, W> {
                         crate::AddressSpace::Storage { access } => access,
                         _ => crate::StorageAccess::default(),
                     };
-                    let wal = WrappedArrayLength {
-                        writable: storage_access.contains(crate::StorageAccess::STORE),
-                    };
+                    if !self.options.warp_buffer_size_workaround {
+                        let wal = WrappedArrayLength {
+                            writable: storage_access.contains(crate::StorageAccess::STORE),
+                        };
 
-                    if self.wrapped.insert(WrappedType::ArrayLength(wal)) {
-                        self.write_wrapped_array_length_function(wal)?;
+                        if self.wrapped.insert(WrappedType::ArrayLength(wal)) {
+                            self.write_wrapped_array_length_function(wal)?;
+                        }
                     }
                 }
                 crate::Expression::ImageSample { clamp_to_edge, .. } => {

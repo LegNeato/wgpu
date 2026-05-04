@@ -1,0 +1,4 @@
+# Companion to `extended_arith.spvasm` that exercises the GLSL ES polyfill
+# path for `addCarry`/`subBorrow`/`mulExtended`. The other backends are
+# already covered by `extended_arith`, so this fixture only emits GLSL.
+targets = "GLSL"

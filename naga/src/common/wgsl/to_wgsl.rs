@@ -151,6 +151,10 @@ impl TryToWgsl for crate::MathFunction {
 
             // Non-standard math functions.
             Mf::Inverse | Mf::Outer => return None,
+
+            // Extended-result integer arithmetic — not WGSL builtins; handled
+            // by polyfill in the WGSL backend.
+            Mf::AddCarry | Mf::SubBorrow | Mf::MulExtended => return None,
         })
     }
 }

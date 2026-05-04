@@ -286,6 +286,171 @@ impl<'a, W: Write> Writer<'a, W> {
                         )?;
                     }
                 }
+                &crate::PredeclaredType::AddCarryResult { size, scalar }
+                | &crate::PredeclaredType::SubBorrowResult { size, scalar }
+                | &crate::PredeclaredType::MulExtendedResult { size, scalar } => {
+                    // GLSL: scalar `uint`/`int` and vector `uvecN`/`ivecN`.
+                    let (scalar_name, kind_prefix) = match scalar.kind {
+                        crate::ScalarKind::Uint => ("uint", "u"),
+                        crate::ScalarKind::Sint => ("int", "i"),
+                        _ => unreachable!(),
+                    };
+                    let arg_type_name_owner;
+                    let arg_type_name = if let Some(size) = size {
+                        arg_type_name_owner = format!("{kind_prefix}vec{}", size as u8);
+                        &arg_type_name_owner
+                    } else {
+                        scalar_name
+                    };
+
+                    let struct_name = &self.names[&NameKey::Type(*struct_ty)];
+
+                    writeln!(self.out)?;
+                    if self
+                        .options
+                        .version
+                        .supports_carry_borrow_extended_intrinsics()
+                    {
+                        // Wrap GLSL Desktop 4.0+'s natives, which use
+                        // out-parameters.
+                        match *type_key {
+                            crate::PredeclaredType::AddCarryResult { .. } => {
+                                writeln!(
+                                    self.out,
+                                    "{struct_name} {ADD_CARRY_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {arg_type_name} carry;
+    {arg_type_name} result = uaddCarry(a, b, carry);
+    return {struct_name}(result, carry);
+}}",
+                                )?;
+                            }
+                            crate::PredeclaredType::SubBorrowResult { .. } => {
+                                writeln!(
+                                    self.out,
+                                    "{struct_name} {SUB_BORROW_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {arg_type_name} borrow;
+    {arg_type_name} result = usubBorrow(a, b, borrow);
+    return {struct_name}(result, borrow);
+}}",
+                                )?;
+                            }
+                            // GLSL's u/imulExtended writes the high half to
+                            // the third out-param and the low half to the
+                            // fourth.
+                            crate::PredeclaredType::MulExtendedResult { .. } => {
+                                let called = match scalar.kind {
+                                    crate::ScalarKind::Sint => "imulExtended",
+                                    crate::ScalarKind::Uint => "umulExtended",
+                                    _ => unreachable!(),
+                                };
+                                writeln!(
+                                    self.out,
+                                    "{struct_name} {MUL_EXTENDED_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {arg_type_name} high;
+    {arg_type_name} low;
+    {called}(a, b, high, low);
+    return {struct_name}(low, high);
+}}",
+                                )?;
+                            }
+                            _ => unreachable!(),
+                        }
+                    } else {
+                        // GLSL ES (and Desktop < 4.0) lack these natives —
+                        // emit a portable polyfill.
+                        //
+                        // GLSL's `<` works for scalars but not vectors;
+                        // vectors need `lessThan(a, b)`. Bool→uint conversion
+                        // is via the type constructor in both cases.
+                        let lt = |a: &str, b: &str| -> String {
+                            match size {
+                                Some(_) => format!("{arg_type_name}(lessThan({a}, {b}))"),
+                                None => format!("{arg_type_name}({a} < {b})"),
+                            }
+                        };
+                        match *type_key {
+                            crate::PredeclaredType::AddCarryResult { .. } => {
+                                let carry = lt("result", "a");
+                                writeln!(
+                                    self.out,
+                                    "{struct_name} {ADD_CARRY_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {arg_type_name} result = a + b;
+    {arg_type_name} carry = {carry};
+    return {struct_name}(result, carry);
+}}",
+                                )?;
+                            }
+                            crate::PredeclaredType::SubBorrowResult { .. } => {
+                                let borrow = lt("a", "b");
+                                writeln!(
+                                    self.out,
+                                    "{struct_name} {SUB_BORROW_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {arg_type_name} result = a - b;
+    {arg_type_name} borrow = {borrow};
+    return {struct_name}(result, borrow);
+}}",
+                                )?;
+                            }
+                            // High half via Hacker's Delight 16x16 multiply,
+                            // with a sign correction for signed operands:
+                            // `high_s = high_u - (b<0 ? a : 0) - (a<0 ? b : 0)`.
+                            crate::PredeclaredType::MulExtendedResult { .. } => {
+                                let unsigned_arg = match size {
+                                    Some(size) => format!("uvec{}", size as u8),
+                                    None => "uint".to_string(),
+                                };
+                                match scalar.kind {
+                                    crate::ScalarKind::Sint => {
+                                        // sign mask: -1 (all bits) for
+                                        // negative operands, 0 otherwise.
+                                        // `>> 31` on a signed int
+                                        // sign-extends in GLSL, so the result
+                                        // reinterpreted as unsigned is the
+                                        // mask.
+                                        writeln!(
+                                            self.out,
+                                            "{struct_name} {MUL_EXTENDED_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {unsigned_arg} au = {unsigned_arg}(a);
+    {unsigned_arg} bu = {unsigned_arg}(b);
+    {unsigned_arg} mask = {unsigned_arg}(0xFFFFu);
+    {unsigned_arg} aL = au & mask;
+    {unsigned_arg} aH = au >> 16u;
+    {unsigned_arg} bL = bu & mask;
+    {unsigned_arg} bH = bu >> 16u;
+    {unsigned_arg} ll = aL * bL;
+    {unsigned_arg} mid = aL * bH + aH * bL;
+    {unsigned_arg} c = ((ll >> 16u) + (mid & mask)) >> 16u;
+    {unsigned_arg} high_u = aH * bH + (mid >> 16u) + c;
+    high_u -= au & {unsigned_arg}(b >> 31);
+    high_u -= bu & {unsigned_arg}(a >> 31);
+    return {struct_name}(a * b, {arg_type_name}(high_u));
+}}",
+                                        )?;
+                                    }
+                                    crate::ScalarKind::Uint => {
+                                        writeln!(
+                                            self.out,
+                                            "{struct_name} {MUL_EXTENDED_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {arg_type_name} mask = {arg_type_name}(0xFFFFu);
+    {arg_type_name} aL = a & mask;
+    {arg_type_name} aH = a >> 16u;
+    {arg_type_name} bL = b & mask;
+    {arg_type_name} bH = b >> 16u;
+    {arg_type_name} ll = aL * bL;
+    {arg_type_name} mid = aL * bH + aH * bL;
+    {arg_type_name} c = ((ll >> 16u) + (mid & mask)) >> 16u;
+    {arg_type_name} high = aH * bH + (mid >> 16u) + c;
+    return {struct_name}(a * b, high);
+}}",
+                                        )?;
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }
                 &crate::PredeclaredType::AtomicCompareExchangeWeakResult(_) => {
                     // Handled by the general struct writing loop earlier.
                 }
@@ -3142,6 +3307,9 @@ impl<'a, W: Write> Writer<'a, W> {
                     Mf::Trunc => "trunc",
                     Mf::Modf => MODF_FUNCTION,
                     Mf::Frexp => FREXP_FUNCTION,
+                    Mf::AddCarry => ADD_CARRY_FUNCTION,
+                    Mf::SubBorrow => SUB_BORROW_FUNCTION,
+                    Mf::MulExtended => MUL_EXTENDED_FUNCTION,
                     Mf::Ldexp => "ldexp",
                     // exponent
                     Mf::Exp => "exp",

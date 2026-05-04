@@ -8,7 +8,10 @@ use core::fmt::Write;
 
 use super::Error;
 use super::ToWgslIfImplemented as _;
-use crate::{back::wgsl::polyfill::InversePolyfill, common::wgsl::TypeContext};
+use crate::{
+    back::wgsl::polyfill::{InversePolyfill, RequiredPolyfill},
+    common::wgsl::TypeContext,
+};
 use crate::{
     back::{self, Baked},
     common::{
@@ -84,7 +87,7 @@ pub struct Writer<W> {
     names: crate::FastHashMap<NameKey, String>,
     namer: proc::Namer,
     named_expressions: crate::NamedExpressions,
-    required_polyfills: crate::FastIndexSet<InversePolyfill>,
+    required_polyfills: crate::FastIndexSet<RequiredPolyfill>,
 }
 
 impl<W: Write> Writer<W> {
@@ -132,9 +135,8 @@ impl<W: Write> Writer<W> {
     fn is_builtin_wgsl_struct(&self, module: &Module, ty: Handle<crate::Type>) -> bool {
         module
             .special_types
-            .predeclared_types
-            .values()
-            .any(|t| *t == ty)
+            .wgsl_predeclared_struct_handles()
+            .any(|t| t == ty)
             || Some(ty) == module.special_types.external_texture_params
             || Some(ty) == module.special_types.external_texture_transfer_function
     }
@@ -274,10 +276,34 @@ impl<W: Write> Writer<W> {
         }
 
         // Write any polyfills that were required.
-        for polyfill in &self.required_polyfills {
-            writeln!(self.out)?;
-            write!(self.out, "{}", polyfill.source)?;
-            writeln!(self.out)?;
+        //
+        // Take the set so the loop body can call `&mut self` methods to
+        // emit dynamically-generated polyfills. The set is reset at the
+        // start of every `write` call, so consuming it here is fine.
+        for polyfill in core::mem::take(&mut self.required_polyfills) {
+            match polyfill {
+                RequiredPolyfill::Inverse(inverse) => {
+                    writeln!(self.out)?;
+                    write!(self.out, "{}", inverse.source)?;
+                    writeln!(self.out)?;
+                }
+                RequiredPolyfill::ExtendedArith(type_key) => {
+                    let struct_ty = *module
+                        .special_types
+                        .predeclared_types
+                        .get(&type_key)
+                        .expect("predeclared type registered when polyfill was demanded");
+                    let (size, scalar) = match type_key {
+                        crate::PredeclaredType::AddCarryResult { size, scalar }
+                        | crate::PredeclaredType::SubBorrowResult { size, scalar }
+                        | crate::PredeclaredType::MulExtendedResult { size, scalar } => {
+                            (size, scalar)
+                        }
+                        _ => unreachable!(),
+                    };
+                    self.write_extended_arith_polyfill(type_key, struct_ty, size, scalar)?;
+                }
+            }
         }
 
         Ok(())
@@ -641,6 +667,168 @@ impl<W: Write> Writer<W> {
                     write!(self.out, "@incoming_payload({payload_name}) ")?;
                 }
             };
+        }
+        Ok(())
+    }
+
+    /// Compute the WGSL polyfill function name for one of the three
+    /// extended-result integer arithmetic operations, specialized per
+    /// scalar/vector argument type. WGSL does not support function
+    /// overloading, so each operand specialization needs a distinct name.
+    fn extended_arith_polyfill_name(
+        type_key: crate::PredeclaredType,
+        size: Option<crate::VectorSize>,
+        scalar: crate::Scalar,
+    ) -> String {
+        // The leading `_naga` matches the reserved-prefix list in
+        // `Writer::reset` so user identifiers cannot collide with these
+        // polyfills.
+        let base = match type_key {
+            crate::PredeclaredType::AddCarryResult { .. } => "_naga_addCarry",
+            crate::PredeclaredType::SubBorrowResult { .. } => "_naga_subBorrow",
+            crate::PredeclaredType::MulExtendedResult { .. } => "_naga_mulExtended",
+            _ => unreachable!(),
+        };
+        let kind = match scalar.kind {
+            crate::ScalarKind::Uint => "u",
+            crate::ScalarKind::Sint => "i",
+            _ => unreachable!(),
+        };
+        let bits = 8 * scalar.width;
+        match size {
+            Some(size) => format!("{base}_vec{}_{kind}{bits}", size as u8),
+            None => format!("{base}_{kind}{bits}"),
+        }
+    }
+
+    /// Emit a WGSL polyfill function for one of the three extended-result
+    /// integer arithmetic operations.
+    fn write_extended_arith_polyfill(
+        &mut self,
+        type_key: crate::PredeclaredType,
+        struct_ty: Handle<crate::Type>,
+        size: Option<crate::VectorSize>,
+        scalar: crate::Scalar,
+    ) -> BackendResult {
+        let struct_name = &self.names[&NameKey::Type(struct_ty)];
+        let fun_name = Self::extended_arith_polyfill_name(type_key, size, scalar);
+
+        let scalar_name = match scalar.kind {
+            crate::ScalarKind::Uint => match scalar.width {
+                4 => "u32",
+                _ => {
+                    return Err(Error::Custom(format!(
+                    "WGSL backend: unsupported width {} for unsigned extended-result arithmetic",
+                    scalar.width,
+                )))
+                }
+            },
+            crate::ScalarKind::Sint => match scalar.width {
+                4 => "i32",
+                _ => {
+                    return Err(Error::Custom(format!(
+                        "WGSL backend: unsupported width {} for signed extended-result arithmetic",
+                        scalar.width,
+                    )))
+                }
+            },
+            _ => unreachable!(),
+        };
+        let arg_type_name = match size {
+            Some(size) => format!("vec{}<{scalar_name}>", size as u8),
+            None => scalar_name.into(),
+        };
+        // For carry/borrow: convert a bool/bvec to the operand type (a 0-or-1
+        // scalar/vector).
+        let bool_to_int = |expr: &str| -> String {
+            match size {
+                Some(_) => format!("{arg_type_name}({expr})"),
+                None => format!("{scalar_name}({expr})"),
+            }
+        };
+        match type_key {
+            crate::PredeclaredType::AddCarryResult { .. } => {
+                let carry = bool_to_int("result < a");
+                writeln!(self.out)?;
+                writeln!(
+                    self.out,
+                    "fn {fun_name}(a: {arg_type_name}, b: {arg_type_name}) -> {struct_name} {{
+    let result = a + b;
+    let carry = {carry};
+    return {struct_name}(result, carry);
+}}"
+                )?;
+            }
+            crate::PredeclaredType::SubBorrowResult { .. } => {
+                let borrow = bool_to_int("a < b");
+                writeln!(self.out)?;
+                writeln!(
+                    self.out,
+                    "fn {fun_name}(a: {arg_type_name}, b: {arg_type_name}) -> {struct_name} {{
+    let result = a - b;
+    let borrow = {borrow};
+    return {struct_name}(result, borrow);
+}}"
+                )?;
+            }
+            // High half via Hacker's Delight 16x16 multiply. For signed
+            // operands, compute the unsigned high half through a bitcast and
+            // then apply the sign correction
+            // `high_s = high_u - (b<0 ? a : 0) - (a<0 ? b : 0)`.
+            crate::PredeclaredType::MulExtendedResult { .. } => match scalar.kind {
+                crate::ScalarKind::Sint => {
+                    let unsigned_arg_type_name = match size {
+                        Some(size) => format!("vec{}<u32>", size as u8),
+                        None => "u32".into(),
+                    };
+                    let zero = match size {
+                        Some(_) => format!("{unsigned_arg_type_name}(0u)"),
+                        None => "0u".into(),
+                    };
+                    writeln!(self.out)?;
+                    writeln!(
+                        self.out,
+                        "fn {fun_name}(a: {arg_type_name}, b: {arg_type_name}) -> {struct_name} {{
+    let au = bitcast<{unsigned_arg_type_name}>(a);
+    let bu = bitcast<{unsigned_arg_type_name}>(b);
+    let mask = {unsigned_arg_type_name}(0xFFFFu);
+    let aL = au & mask;
+    let aH = au >> {unsigned_arg_type_name}(16u);
+    let bL = bu & mask;
+    let bH = bu >> {unsigned_arg_type_name}(16u);
+    let ll = aL * bL;
+    let mid = aL * bH + aH * bL;
+    let c = ((ll >> {unsigned_arg_type_name}(16u)) + (mid & mask)) >> {unsigned_arg_type_name}(16u);
+    var high_u = aH * bH + (mid >> {unsigned_arg_type_name}(16u)) + c;
+    high_u = high_u - select({zero}, au, b < {arg_type_name}(0));
+    high_u = high_u - select({zero}, bu, a < {arg_type_name}(0));
+    let high = bitcast<{arg_type_name}>(high_u);
+    let low = a * b;
+    return {struct_name}(low, high);
+}}"
+                    )?;
+                }
+                _ => {
+                    writeln!(self.out)?;
+                    writeln!(
+                        self.out,
+                        "fn {fun_name}(a: {arg_type_name}, b: {arg_type_name}) -> {struct_name} {{
+    let mask = {arg_type_name}(0xFFFFu);
+    let aL = a & mask;
+    let aH = a >> {arg_type_name}(16u);
+    let bL = b & mask;
+    let bH = b >> {arg_type_name}(16u);
+    let ll = aL * bL;
+    let mid = aL * bH + aH * bL;
+    let c = ((ll >> {arg_type_name}(16u)) + (mid & mask)) >> {arg_type_name}(16u);
+    let high = aH * bH + (mid >> {arg_type_name}(16u)) + c;
+    let low = a * b;
+    return {struct_name}(low, high);
+}}"
+                    )?;
+                }
+            },
+            _ => unreachable!(),
         }
         Ok(())
     }
@@ -1827,6 +2015,10 @@ impl<W: Write> Writer<W> {
                 enum Function {
                     Regular(&'static str),
                     InversePolyfill(InversePolyfill),
+                    ExtendedArithPolyfill {
+                        name: String,
+                        type_key: crate::PredeclaredType,
+                    },
                 }
 
                 let function = match fun.try_to_wgsl() {
@@ -1839,6 +2031,33 @@ impl<W: Write> Writer<W> {
                             };
 
                             Function::InversePolyfill(overload)
+                        }
+                        // Extended-result integer arithmetic. Each operand
+                        // type needs its own monomorphized polyfill since
+                        // WGSL has no function overloading.
+                        Mf::AddCarry | Mf::SubBorrow | Mf::MulExtended => {
+                            let arg_ty = func_ctx.resolve_type(arg, &module.types);
+                            let (size, scalar) = match *arg_ty {
+                                TypeInner::Scalar(scalar) => (None, scalar),
+                                TypeInner::Vector { size, scalar } => (Some(size), scalar),
+                                _ => return Err(Error::unsupported("math function", fun)),
+                            };
+                            let type_key = match fun {
+                                Mf::AddCarry => {
+                                    crate::PredeclaredType::AddCarryResult { size, scalar }
+                                }
+                                Mf::SubBorrow => {
+                                    crate::PredeclaredType::SubBorrowResult { size, scalar }
+                                }
+                                Mf::MulExtended => {
+                                    crate::PredeclaredType::MulExtendedResult { size, scalar }
+                                }
+                                _ => unreachable!(),
+                            };
+                            Function::ExtendedArithPolyfill {
+                                name: Self::extended_arith_polyfill_name(type_key, size, scalar),
+                                type_key,
+                            }
                         }
                         _ => return Err(Error::unsupported("math function", fun)),
                     },
@@ -1858,7 +2077,19 @@ impl<W: Write> Writer<W> {
                         write!(self.out, "{}(", inverse.fun_name)?;
                         self.write_expr(module, arg, func_ctx)?;
                         write!(self.out, ")")?;
-                        self.required_polyfills.insert(inverse);
+                        self.required_polyfills
+                            .insert(RequiredPolyfill::Inverse(inverse));
+                    }
+                    Function::ExtendedArithPolyfill { name, type_key } => {
+                        write!(self.out, "{name}(")?;
+                        self.write_expr(module, arg, func_ctx)?;
+                        for arg in IntoIterator::into_iter([arg1, arg2, arg3]).flatten() {
+                            write!(self.out, ", ")?;
+                            self.write_expr(module, arg, func_ctx)?;
+                        }
+                        write!(self.out, ")")?;
+                        self.required_polyfills
+                            .insert(RequiredPolyfill::ExtendedArith(type_key));
                     }
                 }
             }

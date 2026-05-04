@@ -44,6 +44,9 @@ const ATOMIC_REFERENCE: &str = "&";
 pub(crate) const ATOMIC_COMP_EXCH_FUNCTION: &str = "naga_atomic_compare_exchange_weak_explicit";
 pub(crate) const MODF_FUNCTION: &str = "naga_modf";
 pub(crate) const FREXP_FUNCTION: &str = "naga_frexp";
+pub(crate) const ADD_CARRY_FUNCTION: &str = "naga_addCarry";
+pub(crate) const SUB_BORROW_FUNCTION: &str = "naga_subBorrow";
+pub(crate) const MUL_EXTENDED_FUNCTION: &str = "naga_mulExtended";
 pub(crate) const ABS_FUNCTION: &str = "naga_abs";
 pub(crate) const DIV_FUNCTION: &str = "naga_div";
 pub(crate) const DOT_FUNCTION_PREFIX: &str = "naga_dot";
@@ -2441,6 +2444,9 @@ impl<W: Write> Writer<W> {
                     Mf::Trunc => "trunc",
                     Mf::Modf => MODF_FUNCTION,
                     Mf::Frexp => FREXP_FUNCTION,
+                    Mf::AddCarry => ADD_CARRY_FUNCTION,
+                    Mf::SubBorrow => SUB_BORROW_FUNCTION,
+                    Mf::MulExtended => MUL_EXTENDED_FUNCTION,
                     Mf::Ldexp => "ldexp",
                     // exponent
                     Mf::Exp => "exp",
@@ -2741,6 +2747,16 @@ impl<W: Write> Writer<W> {
                     Mf::Modf | Mf::Frexp => {
                         write!(self.out, "{fun_name}")?;
                         self.put_call_parameters(iter::once(arg), context)?;
+                    }
+                    Mf::AddCarry | Mf::SubBorrow | Mf::MulExtended => {
+                        // Wrapper functions live in the user namespace, not
+                        // `metal::`. They take the two operands as a flat
+                        // call.
+                        write!(self.out, "{fun_name}")?;
+                        self.put_call_parameters(
+                            iter::once(arg).chain(arg1).chain(arg2).chain(arg3),
+                            context,
+                        )?;
                     }
                     Mf::Pack4xI8 => self.put_pack4x8(arg, context, true, None)?,
                     Mf::Pack4xU8 => self.put_pack4x8(arg, context, false, None)?,
@@ -4682,6 +4698,57 @@ impl<W: Write> Writer<W> {
     return {struct_name}{{ fract, other }};
 }}"
                     )?;
+                }
+                &crate::PredeclaredType::AddCarryResult { size, scalar }
+                | &crate::PredeclaredType::SubBorrowResult { size, scalar }
+                | &crate::PredeclaredType::MulExtendedResult { size, scalar } => {
+                    let arg_type_name_owner;
+                    let arg_type_name = if let Some(size) = size {
+                        arg_type_name_owner =
+                            format!("{NAMESPACE}::{}{}", scalar.to_msl_name(), size as u8);
+                        &arg_type_name_owner
+                    } else {
+                        scalar.to_msl_name()
+                    };
+
+                    let struct_name = &self.names[&NameKey::Type(*struct_ty)];
+
+                    writeln!(self.out)?;
+                    match *type_key {
+                        // Metal has no native add/sub-with-carry; portable
+                        // polyfill via comparison.
+                        crate::PredeclaredType::AddCarryResult { .. } => {
+                            writeln!(
+                                self.out,
+                                "{struct_name} {ADD_CARRY_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {arg_type_name} result = a + b;
+    {arg_type_name} carry = {arg_type_name}(result < a);
+    return {struct_name}{{ result, carry }};
+}}",
+                            )?;
+                        }
+                        crate::PredeclaredType::SubBorrowResult { .. } => {
+                            writeln!(
+                                self.out,
+                                "{struct_name} {SUB_BORROW_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    {arg_type_name} result = a - b;
+    {arg_type_name} borrow = {arg_type_name}(a < b);
+    return {struct_name}{{ result, borrow }};
+}}",
+                            )?;
+                        }
+                        // `metal::mulhi` is overloaded by operand type, so a
+                        // single wrapper handles both signed and unsigned.
+                        crate::PredeclaredType::MulExtendedResult { .. } => {
+                            writeln!(
+                                self.out,
+                                "{struct_name} {MUL_EXTENDED_FUNCTION}({arg_type_name} a, {arg_type_name} b) {{
+    return {struct_name}{{ a * b, {NAMESPACE}::mulhi(a, b) }};
+}}",
+                            )?;
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 &crate::PredeclaredType::AtomicCompareExchangeWeakResult(scalar) => {
                     let arg_type_name = scalar.to_msl_name();

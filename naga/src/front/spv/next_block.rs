@@ -823,6 +823,31 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
                         SignAnchor::Result,
                     )?;
                 }
+                Op::IAddCarry | Op::ISubBorrow | Op::UMulExtended | Op::SMulExtended => {
+                    inst.expect(5)?;
+                    // `OpUMulExtended` and `OpSMulExtended` collapse to one
+                    // IR variant; the operand kind carries the sign.
+                    let (math_function, operand_kind) = match inst.op {
+                        Op::IAddCarry => (crate::MathFunction::AddCarry, crate::ScalarKind::Uint),
+                        Op::ISubBorrow => (crate::MathFunction::SubBorrow, crate::ScalarKind::Uint),
+                        Op::UMulExtended => {
+                            (crate::MathFunction::MulExtended, crate::ScalarKind::Uint)
+                        }
+                        Op::SMulExtended => {
+                            (crate::MathFunction::MulExtended, crate::ScalarKind::Sint)
+                        }
+                        _ => unreachable!(),
+                    };
+                    self.parse_expr_extended_arith(
+                        ctx,
+                        &mut emitter,
+                        &mut block,
+                        block_id,
+                        body_idx,
+                        math_function,
+                        operand_kind,
+                    )?;
+                }
                 Op::IEqual | Op::INotEqual => {
                     inst.expect(5)?;
                     let operator = map_binary_operator(inst.op)?;

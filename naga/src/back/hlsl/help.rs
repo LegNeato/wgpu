@@ -1271,6 +1271,79 @@ impl<W: Write> super::Writer<'_, W> {
                     )?;
                     writeln!(self.out)?;
                 }
+                &crate::PredeclaredType::AddCarryResult { size, scalar }
+                | &crate::PredeclaredType::SubBorrowResult { size, scalar }
+                | &crate::PredeclaredType::MulExtendedResult { size, scalar } => {
+                    let scalar_name = match scalar.kind {
+                        ScalarKind::Uint => "uint",
+                        ScalarKind::Sint => "int",
+                        _ => unreachable!(),
+                    };
+                    let arg_type_name_owner;
+                    let arg_type_name = if let Some(size) = size {
+                        arg_type_name_owner = format!("{scalar_name}{}", size as u8);
+                        &arg_type_name_owner
+                    } else {
+                        scalar_name
+                    };
+
+                    let struct_name = &self.names[&NameKey::Type(*struct_ty)];
+
+                    match *type_key {
+                        crate::PredeclaredType::AddCarryResult { .. } => {
+                            let defined_func_name = super::writer::ADD_CARRY_FUNCTION;
+                            writeln!(
+                                self.out,
+                                "{struct_name} {defined_func_name}({arg_type_name} a, {arg_type_name} b) {{
+    {struct_name} ret = ({struct_name})0;
+    {arg_type_name} carry;
+    ret.result = uaddCarry(a, b, carry);
+    ret.carry = carry;
+    return ret;
+}}",
+                            )?;
+                        }
+                        crate::PredeclaredType::SubBorrowResult { .. } => {
+                            let defined_func_name = super::writer::SUB_BORROW_FUNCTION;
+                            writeln!(
+                                self.out,
+                                "{struct_name} {defined_func_name}({arg_type_name} a, {arg_type_name} b) {{
+    {struct_name} ret = ({struct_name})0;
+    {arg_type_name} borrow;
+    ret.result = usubBorrow(a, b, borrow);
+    ret.borrow = borrow;
+    return ret;
+}}",
+                            )?;
+                        }
+                        // HLSL's `umul`/`imul` returns the high and low halves
+                        // as two out-parameters; both overloads share the
+                        // same wrapper name and HLSL's overload resolution
+                        // picks the right one at the call site.
+                        crate::PredeclaredType::MulExtendedResult { .. } => {
+                            let defined_func_name = super::writer::MUL_EXTENDED_FUNCTION;
+                            let called_func_name = match scalar.kind {
+                                ScalarKind::Sint => "imul",
+                                ScalarKind::Uint => "umul",
+                                _ => unreachable!(),
+                            };
+                            writeln!(
+                                self.out,
+                                "{struct_name} {defined_func_name}({arg_type_name} a, {arg_type_name} b) {{
+    {struct_name} ret = ({struct_name})0;
+    {arg_type_name} high;
+    {arg_type_name} low;
+    {called_func_name}(a, b, high, low);
+    ret.low = low;
+    ret.high = high;
+    return ret;
+}}",
+                            )?;
+                        }
+                        _ => unreachable!(),
+                    }
+                    writeln!(self.out)?;
+                }
                 &crate::PredeclaredType::AtomicCompareExchangeWeakResult { .. } => {}
             }
         }

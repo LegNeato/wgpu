@@ -1107,6 +1107,126 @@ impl<I: Iterator<Item = u32>> Frontend<I> {
         Ok(())
     }
 
+    /// Lower one of the four extended-result integer arithmetic SPIR-V
+    /// opcodes (`OpIAddCarry`, `OpISubBorrow`, `Op{U,S}MulExtended`) to
+    /// the corresponding naga `MathFunction` over a `PredeclaredType`
+    /// result struct. `operand_kind` is the operand signedness we want at
+    /// the IR level; SPIR-V types are signless, so a mismatch becomes a
+    /// bitcast.
+    #[allow(clippy::too_many_arguments)]
+    fn parse_expr_extended_arith(
+        &mut self,
+        ctx: &mut BlockContext,
+        emitter: &mut crate::proc::Emitter,
+        block: &mut crate::Block,
+        block_id: spirv::Word,
+        body_idx: usize,
+        math_function: crate::MathFunction,
+        operand_kind: crate::ScalarKind,
+    ) -> Result<(), Error> {
+        let start = self.data_offset;
+        let result_type_id = self.next()?;
+        let result_id = self.next()?;
+        let p1_id = self.next()?;
+        let p2_id = self.next()?;
+        let span = self.span_from_with_op(start);
+
+        // The result struct's first member type is the operand type per the
+        // SPIR-V spec for these instructions.
+        let result_struct_handle = self.lookup_type.lookup(result_type_id)?.handle;
+        let member_ty_id = self
+            .lookup_member
+            .get(&(result_struct_handle, 0))
+            .ok_or(Error::InvalidAccessType(result_type_id))?
+            .type_id;
+        let member_ty_handle = self.lookup_type.lookup(member_ty_id)?.handle;
+        let (size, scalar) = match ctx.module.types[member_ty_handle].inner {
+            crate::TypeInner::Scalar(scalar) => (None, scalar),
+            crate::TypeInner::Vector { size, scalar } => (Some(size), scalar),
+            _ => return Err(Error::InvalidAccessType(result_type_id)),
+        };
+
+        let p1_lexp = self.lookup_expression.lookup(p1_id)?;
+        let p1_type_id = p1_lexp.type_id;
+        let mut left = self.get_expr_handle(p1_id, p1_lexp, ctx, emitter, block, body_idx);
+        let p2_lexp = self.lookup_expression.lookup(p2_id)?;
+        let p2_type_id = p2_lexp.type_id;
+        let mut right = self.get_expr_handle(p2_id, p2_lexp, ctx, emitter, block, body_idx);
+
+        // Bitcast operands whose declared SPIR-V signedness doesn't match
+        // `operand_kind` so the IR-level types line up.
+        let cast_if_needed = |handle: Handle<crate::Expression>,
+                              src_type_id: spirv::Word,
+                              expressions: &mut Arena<crate::Expression>|
+         -> Handle<crate::Expression> {
+            let src_handle = match self.lookup_type.lookup(src_type_id) {
+                Ok(lt) => lt.handle,
+                Err(_) => return handle,
+            };
+            let src_kind = ctx.module.types[src_handle].inner.scalar_kind();
+            if src_kind == Some(operand_kind) {
+                handle
+            } else {
+                expressions.append(
+                    crate::Expression::As {
+                        expr: handle,
+                        kind: operand_kind,
+                        convert: None,
+                    },
+                    span,
+                )
+            }
+        };
+        left = cast_if_needed(left, p1_type_id, ctx.expressions);
+        right = cast_if_needed(right, p2_type_id, ctx.expressions);
+
+        // The predeclared result struct's scalar carries the operand kind so
+        // backends know which high-half computation to emit for `MulExtended`.
+        let predeclared_scalar = crate::Scalar {
+            kind: operand_kind,
+            width: scalar.width,
+        };
+        let predeclared = match math_function {
+            crate::MathFunction::AddCarry => crate::PredeclaredType::AddCarryResult {
+                size,
+                scalar: predeclared_scalar,
+            },
+            crate::MathFunction::SubBorrow => crate::PredeclaredType::SubBorrowResult {
+                size,
+                scalar: predeclared_scalar,
+            },
+            crate::MathFunction::MulExtended => crate::PredeclaredType::MulExtendedResult {
+                size,
+                scalar: predeclared_scalar,
+            },
+            _ => unreachable!(),
+        };
+        // Ensure the predeclared struct is registered so the typifier can
+        // resolve the result type.
+        ctx.module.generate_predeclared_type(predeclared);
+
+        let math_expr = ctx.expressions.append(
+            crate::Expression::Math {
+                fun: math_function,
+                arg: left,
+                arg1: Some(right),
+                arg2: None,
+                arg3: None,
+            },
+            span,
+        );
+
+        self.lookup_expression.insert(
+            result_id,
+            LookupExpression {
+                handle: math_expr,
+                type_id: result_type_id,
+                block_id,
+            },
+        );
+        Ok(())
+    }
+
     /// A more complicated version of the binary op,
     /// where we force the operand to have the same type as the result.
     /// This is mostly needed for "i++" and "i--" coming from GLSL.

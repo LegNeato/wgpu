@@ -91,6 +91,9 @@ const CLAMPED_LOD_SUFFIX: &str = "_clamped_lod";
 
 pub(crate) const MODF_FUNCTION: &str = "naga_modf";
 pub(crate) const FREXP_FUNCTION: &str = "naga_frexp";
+pub(crate) const ADD_CARRY_FUNCTION: &str = "naga_addCarry";
+pub(crate) const SUB_BORROW_FUNCTION: &str = "naga_subBorrow";
+pub(crate) const MUL_EXTENDED_FUNCTION: &str = "naga_mulExtended";
 
 // Must match code in glsl_built_in
 pub const FIRST_INSTANCE_BINDING: &str = "naga_vs_first_instance";
@@ -240,6 +243,14 @@ impl Version {
 
     fn supports_frexp_function(&self) -> bool {
         *self >= Version::Desktop(400) || *self >= Version::new_gles(310)
+    }
+
+    /// `uaddCarry` / `usubBorrow` / `umulExtended` / `imulExtended` are
+    /// core in GLSL 4.00+. They're not in any GLSL ES version (and there
+    /// is no extension that adds them to ES), so the backend has to use
+    /// a portable polyfill there.
+    fn supports_carry_borrow_extended_intrinsics(&self) -> bool {
+        *self >= Version::Desktop(400)
     }
 
     fn supports_derivative_control(&self) -> bool {

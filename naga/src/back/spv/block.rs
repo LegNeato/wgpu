@@ -1914,6 +1914,34 @@ impl BlockContext<'_> {
 
                         MathOp::Custom(last_instruction)
                     }
+                    Mf::AddCarry => MathOp::Custom(Instruction::binary(
+                        spirv::Op::IAddCarry,
+                        result_type_id,
+                        id,
+                        arg0_id,
+                        arg1_id,
+                    )),
+                    Mf::SubBorrow => MathOp::Custom(Instruction::binary(
+                        spirv::Op::ISubBorrow,
+                        result_type_id,
+                        id,
+                        arg0_id,
+                        arg1_id,
+                    )),
+                    Mf::MulExtended => {
+                        let op = match arg_scalar_kind {
+                            Some(crate::ScalarKind::Sint) => spirv::Op::SMulExtended,
+                            Some(crate::ScalarKind::Uint) => spirv::Op::UMulExtended,
+                            _ => unreachable!(),
+                        };
+                        MathOp::Custom(Instruction::binary(
+                            op,
+                            result_type_id,
+                            id,
+                            arg0_id,
+                            arg1_id,
+                        ))
+                    }
                 };
 
                 block.body.push(match math_op {

@@ -33,6 +33,9 @@ const SPECIAL_OTHER: &str = "other";
 
 pub(crate) const MODF_FUNCTION: &str = "naga_modf";
 pub(crate) const FREXP_FUNCTION: &str = "naga_frexp";
+pub(crate) const ADD_CARRY_FUNCTION: &str = "naga_addCarry";
+pub(crate) const SUB_BORROW_FUNCTION: &str = "naga_subBorrow";
+pub(crate) const MUL_EXTENDED_FUNCTION: &str = "naga_mulExtended";
 pub(crate) const EXTRACT_BITS_FUNCTION: &str = "naga_extractBits";
 pub(crate) const INSERT_BITS_FUNCTION: &str = "naga_insertBits";
 pub(crate) const SAMPLER_HEAP_VAR: &str = "nagaSamplerHeap";
@@ -4021,6 +4024,9 @@ impl<'a, W: fmt::Write> super::Writer<'a, W> {
                     Mf::Trunc => Function::Regular("trunc"),
                     Mf::Modf => Function::Regular(MODF_FUNCTION),
                     Mf::Frexp => Function::Regular(FREXP_FUNCTION),
+                    Mf::AddCarry => Function::Regular(ADD_CARRY_FUNCTION),
+                    Mf::SubBorrow => Function::Regular(SUB_BORROW_FUNCTION),
+                    Mf::MulExtended => Function::Regular(MUL_EXTENDED_FUNCTION),
                     Mf::Ldexp => Function::Regular("ldexp"),
                     // exponent
                     Mf::Exp => Function::Regular("exp"),

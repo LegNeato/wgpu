@@ -609,6 +609,63 @@ impl crate::Module {
                     },
                 }
             }
+            crate::PredeclaredType::AddCarryResult { size, scalar }
+            | crate::PredeclaredType::SubBorrowResult { size, scalar }
+            | crate::PredeclaredType::MulExtendedResult { size, scalar } => {
+                // Both struct members share the operand's scalar/vector type.
+                // Field names differ by op:
+                //   AddCarry    -> { result, carry }
+                //   SubBorrow   -> { result, borrow }
+                //   MulExtended -> { low, high }
+                let scalar_ty = self.types.insert(
+                    crate::Type {
+                        name: None,
+                        inner: crate::TypeInner::Scalar(scalar),
+                    },
+                    Span::UNDEFINED,
+                );
+
+                let (member_ty, second_offset) = if let Some(size) = size {
+                    let vec_ty = self.types.insert(
+                        crate::Type {
+                            name: None,
+                            inner: crate::TypeInner::Vector { size, scalar },
+                        },
+                        Span::UNDEFINED,
+                    );
+                    (vec_ty, size as u32 * scalar.width as u32)
+                } else {
+                    (scalar_ty, scalar.width as u32)
+                };
+
+                let (first_name, second_name) = match special_type {
+                    crate::PredeclaredType::AddCarryResult { .. } => ("result", "carry"),
+                    crate::PredeclaredType::SubBorrowResult { .. } => ("result", "borrow"),
+                    crate::PredeclaredType::MulExtendedResult { .. } => ("low", "high"),
+                    _ => unreachable!(),
+                };
+
+                crate::Type {
+                    name: Some(name),
+                    inner: crate::TypeInner::Struct {
+                        members: vec![
+                            crate::StructMember {
+                                name: Some(first_name.to_string()),
+                                ty: member_ty,
+                                binding: None,
+                                offset: 0,
+                            },
+                            crate::StructMember {
+                                name: Some(second_name.to_string()),
+                                ty: member_ty,
+                                binding: None,
+                                offset: second_offset,
+                            },
+                        ],
+                        span: second_offset * 2,
+                    },
+                }
+            }
         };
 
         let handle = self.types.insert(ty, Span::UNDEFINED);

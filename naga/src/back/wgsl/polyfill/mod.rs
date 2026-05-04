@@ -1,5 +1,22 @@
 use crate::{ScalarKind, TypeInner, VectorSize};
 
+/// A polyfill the WGSL backend must emit at the end of the module.
+///
+/// The dispatch site at `Expression::Math` registers one of these in
+/// [`super::Writer::required_polyfills`] when it emits a call into a
+/// polyfill, and the loop in [`super::Writer::write`] emits each one
+/// exactly once at module end.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub(super) enum RequiredPolyfill {
+    /// Square-matrix `inverse()`. Static WGSL source per matrix size and
+    /// scalar width.
+    Inverse(InversePolyfill),
+    /// One of `MathFunction::AddCarry`, `MathFunction::SubBorrow`, or
+    /// `MathFunction::MulExtended`. The [`crate::PredeclaredType`] fully
+    /// identifies which polyfill we need (operation + size + scalar).
+    ExtendedArith(crate::PredeclaredType),
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct InversePolyfill {
     pub fun_name: &'static str,

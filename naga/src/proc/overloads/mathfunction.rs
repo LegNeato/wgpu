@@ -91,6 +91,13 @@ impl ir::MathFunction {
             Mf::Dot => regular!(2, VECN of NUMERIC -> Scalar).into(),
             Mf::Modf => regular!(1, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED -> Modf).into(),
             Mf::Frexp => regular!(1, SCALAR|VECN of FLOAT_ABSTRACT_UNIMPLEMENTED -> Frexp).into(),
+            Mf::AddCarry => {
+                regular!(2, SCALAR|VECN of CONCRETE_UNSIGNED_INTEGER -> AddCarry).into()
+            }
+            Mf::SubBorrow => {
+                regular!(2, SCALAR|VECN of CONCRETE_UNSIGNED_INTEGER -> SubBorrow).into()
+            }
+            Mf::MulExtended => regular!(2, SCALAR|VECN of CONCRETE_INTEGER -> MulExtended).into(),
             Mf::Ldexp => ldexp().into(),
             Mf::Outer => outer().into(),
             Mf::Cross => regular!(2, VEC3 of FLOAT).into(),

@@ -1,0 +1,123 @@
+; SPIR-V
+; Version: 1.0
+; Generator: Khronos Glslang Reference Front End; 11
+; Bound: 64
+; Schema: 0
+               OpCapability Shader
+          %1 = OpExtInstImport "GLSL.std.450"
+               OpMemoryModel Logical GLSL450
+               OpEntryPoint GLCompute %main "main"
+               OpExecutionMode %main LocalSize 1 1 1
+               OpSource GLSL 460
+               OpName %main "main"
+               OpName %Out "Out"
+               OpMemberName %Out 0 "sum"
+               OpMemberName %Out 1 "carry"
+               OpMemberName %Out 2 "diff"
+               OpMemberName %Out 3 "borrow"
+               OpMemberName %Out 4 "smul_low"
+               OpMemberName %Out 5 "smul_high"
+               OpName %outp "outp"
+               OpName %In "In"
+               OpMemberName %In 0 "a"
+               OpMemberName %In 1 "b"
+               OpMemberName %In 2 "sa"
+               OpMemberName %In 3 "sb"
+               OpName %inp "inp"
+               OpName %c "c"
+               OpName %ResType "ResType"
+               OpName %d "d"
+               OpName %smh "smh"
+               OpName %sml "sml"
+               OpName %ResType_0 "ResType"
+               OpDecorate %Out BufferBlock
+               OpMemberDecorate %Out 0 Offset 0
+               OpMemberDecorate %Out 1 Offset 4
+               OpMemberDecorate %Out 2 Offset 8
+               OpMemberDecorate %Out 3 Offset 12
+               OpMemberDecorate %Out 4 Offset 16
+               OpMemberDecorate %Out 5 Offset 20
+               OpDecorate %outp Binding 1
+               OpDecorate %outp DescriptorSet 0
+               OpDecorate %In BufferBlock
+               OpMemberDecorate %In 0 Offset 0
+               OpMemberDecorate %In 1 Offset 4
+               OpMemberDecorate %In 2 Offset 8
+               OpMemberDecorate %In 3 Offset 12
+               OpDecorate %inp Binding 0
+               OpDecorate %inp DescriptorSet 0
+               OpDecorate %gl_WorkGroupSize BuiltIn WorkgroupSize
+       %void = OpTypeVoid
+          %3 = OpTypeFunction %void
+       %uint = OpTypeInt 32 0
+        %int = OpTypeInt 32 1
+        %Out = OpTypeStruct %uint %uint %uint %uint %int %int
+%_ptr_Uniform_Out = OpTypePointer Uniform %Out
+       %outp = OpVariable %_ptr_Uniform_Out Uniform
+      %int_0 = OpConstant %int 0
+         %In = OpTypeStruct %uint %uint %int %int
+%_ptr_Uniform_In = OpTypePointer Uniform %In
+        %inp = OpVariable %_ptr_Uniform_In Uniform
+%_ptr_Uniform_uint = OpTypePointer Uniform %uint
+      %int_1 = OpConstant %int 1
+%_ptr_Function_uint = OpTypePointer Function %uint
+    %ResType = OpTypeStruct %uint %uint
+      %int_2 = OpConstant %int 2
+      %int_3 = OpConstant %int 3
+%_ptr_Uniform_int = OpTypePointer Uniform %int
+%_ptr_Function_int = OpTypePointer Function %int
+  %ResType_0 = OpTypeStruct %int %int
+      %int_4 = OpConstant %int 4
+      %int_5 = OpConstant %int 5
+     %v3uint = OpTypeVector %uint 3
+     %uint_1 = OpConstant %uint 1
+%gl_WorkGroupSize = OpConstantComposite %v3uint %uint_1 %uint_1 %uint_1
+       %main = OpFunction %void None %3
+          %5 = OpLabel
+          %c = OpVariable %_ptr_Function_uint Function
+          %d = OpVariable %_ptr_Function_uint Function
+        %smh = OpVariable %_ptr_Function_int Function
+        %sml = OpVariable %_ptr_Function_int Function
+         %16 = OpAccessChain %_ptr_Uniform_uint %inp %int_0
+         %17 = OpLoad %uint %16
+         %19 = OpAccessChain %_ptr_Uniform_uint %inp %int_1
+         %20 = OpLoad %uint %19
+         %24 = OpIAddCarry %ResType %17 %20
+         %25 = OpCompositeExtract %uint %24 1
+               OpStore %c %25
+         %26 = OpCompositeExtract %uint %24 0
+         %27 = OpAccessChain %_ptr_Uniform_uint %outp %int_0
+               OpStore %27 %26
+         %28 = OpLoad %uint %c
+         %29 = OpAccessChain %_ptr_Uniform_uint %outp %int_1
+               OpStore %29 %28
+         %31 = OpAccessChain %_ptr_Uniform_uint %inp %int_0
+         %32 = OpLoad %uint %31
+         %33 = OpAccessChain %_ptr_Uniform_uint %inp %int_1
+         %34 = OpLoad %uint %33
+         %36 = OpISubBorrow %ResType %32 %34
+         %37 = OpCompositeExtract %uint %36 1
+               OpStore %d %37
+         %38 = OpCompositeExtract %uint %36 0
+         %39 = OpAccessChain %_ptr_Uniform_uint %outp %int_2
+               OpStore %39 %38
+         %41 = OpLoad %uint %d
+         %42 = OpAccessChain %_ptr_Uniform_uint %outp %int_3
+               OpStore %42 %41
+         %44 = OpAccessChain %_ptr_Uniform_int %inp %int_2
+         %45 = OpLoad %int %44
+         %46 = OpAccessChain %_ptr_Uniform_int %inp %int_3
+         %47 = OpLoad %int %46
+         %52 = OpSMulExtended %ResType_0 %45 %47
+         %53 = OpCompositeExtract %int %52 0
+               OpStore %sml %53
+         %54 = OpCompositeExtract %int %52 1
+               OpStore %smh %54
+         %56 = OpLoad %int %sml
+         %57 = OpAccessChain %_ptr_Uniform_int %outp %int_4
+               OpStore %57 %56
+         %59 = OpLoad %int %smh
+         %60 = OpAccessChain %_ptr_Uniform_int %outp %int_5
+               OpStore %60 %59
+               OpReturn
+               OpFunctionEnd

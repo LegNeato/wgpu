@@ -123,6 +123,7 @@ impl ScalarSet {
     pub const ABSTRACT: Self = Self::ABSTRACT_INT.union(Self::ABSTRACT_FLOAT);
     pub const CONCRETE: Self = Self::all().difference(Self::ABSTRACT);
     pub const CONCRETE_INTEGER: Self = Self::INTEGER.intersection(Self::CONCRETE);
+    pub const CONCRETE_UNSIGNED_INTEGER: Self = Self::U16.union(Self::U32).union(Self::U64);
     pub const CONCRETE_FLOAT: Self = Self::FLOAT.intersection(Self::CONCRETE);
 
     /// Floating-point scalars, with the abstract floats omitted for

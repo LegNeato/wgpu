@@ -1430,6 +1430,10 @@ pub enum MathFunction {
     InsertBits,
     FirstTrailingBit,
     FirstLeadingBit,
+    // extended-result integer arithmetic
+    AddCarry,
+    SubBorrow,
+    MulExtended,
     // data packing
     Pack4x8snorm,
     Pack4x8unorm,
@@ -2557,12 +2561,18 @@ pub struct EntryPoint {
     pub incoming_ray_payload: Option<Handle<GlobalVariable>>,
 }
 
-/// Return types predeclared for the frexp, modf, and atomicCompareExchangeWeak built-in functions.
+/// Return-types stored in the module that can't be spelled directly by every
+/// frontend's source language.
 ///
-/// These cannot be spelled in WGSL source.
+/// The `frexp`, `modf`, and `atomicCompareExchangeWeak` cases match WGSL's
+/// [predeclared types]; the others are naga-internal struct shapes used to
+/// represent SPIR-V's extended-result integer arithmetic.
 ///
-/// Stored in [`SpecialTypes::predeclared_types`] and created by [`Module::generate_predeclared_type`].
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+/// Stored in [`SpecialTypes::predeclared_types`] and created by
+/// [`Module::generate_predeclared_type`].
+///
+/// [predeclared types]: https://www.w3.org/TR/WGSL/#predeclared
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 #[cfg_attr(feature = "serialize", derive(Serialize))]
 #[cfg_attr(feature = "deserialize", derive(Deserialize))]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
@@ -2573,6 +2583,25 @@ pub enum PredeclaredType {
         scalar: Scalar,
     },
     FrexpResult {
+        size: Option<VectorSize>,
+        scalar: Scalar,
+    },
+    /// Result of [`MathFunction::AddCarry`]: an unsigned scalar/vector
+    /// `result` plus a `carry` of the same type holding 0 or 1.
+    AddCarryResult {
+        size: Option<VectorSize>,
+        scalar: Scalar,
+    },
+    /// Result of [`MathFunction::SubBorrow`]: an unsigned scalar/vector
+    /// `result` plus a `borrow` of the same type holding 0 or 1.
+    SubBorrowResult {
+        size: Option<VectorSize>,
+        scalar: Scalar,
+    },
+    /// Result of [`MathFunction::MulExtended`]: the `low` and `high` halves
+    /// of the full-width product. The operand kind (signed or unsigned)
+    /// selects which arithmetic the high half uses.
+    MulExtendedResult {
         size: Option<VectorSize>,
         scalar: Scalar,
     },

@@ -1393,7 +1393,14 @@ fn inject_common_builtin(
             }
         }
         // TODO: https://github.com/gfx-rs/naga/issues/2526
-        // "modf" | "frexp" => { ... }
+        //
+        // The same out-parameter plumbing is needed to register
+        // `uaddCarry` / `usubBorrow` / `umulExtended` / `imulExtended`
+        // (whose IR / `spv-in` / backend support already exists; see
+        // `MathFunction::{AddCarry, SubBorrow, MulExtended}`).
+        //
+        // "modf" | "frexp" | "uaddCarry" | "usubBorrow"
+        //   | "umulExtended" | "imulExtended" => { ... }
         "cross" => {
             let args = vec![
                 TypeInner::Vector {

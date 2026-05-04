@@ -153,6 +153,7 @@ By @beholdnec in [#8505](https://github.com/gfx-rs/wgpu/pull/8505).
 #### naga
 
 - spirv-out ray tracing pipelines. By @Vecvec in [#9085](https://github.com/gfx-rs/wgpu/pull/9085).
+- Added support for `addCarry`, `subBorrow`, and `mulExtended` integer arithmetic.
 
 ### Changes
 

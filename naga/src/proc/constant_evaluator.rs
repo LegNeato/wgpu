@@ -1976,6 +1976,9 @@ impl<'a> ConstantEvaluator<'a> {
             | crate::MathFunction::QuantizeToF16
             | crate::MathFunction::ExtractBits
             | crate::MathFunction::InsertBits
+            | crate::MathFunction::AddCarry
+            | crate::MathFunction::SubBorrow
+            | crate::MathFunction::MulExtended
             | crate::MathFunction::Pack4x8snorm
             | crate::MathFunction::Pack4x8unorm
             | crate::MathFunction::Pack2x16snorm

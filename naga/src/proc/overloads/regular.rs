@@ -208,6 +208,9 @@ pub(in crate::proc::overloads) enum ConclusionRule {
     Scalar,
     Frexp,
     Modf,
+    AddCarry,
+    SubBorrow,
+    MulExtended,
     U32,
     I32,
     Vec2F,
@@ -223,6 +226,28 @@ impl ConclusionRule {
             Self::Scalar => Conclusion::Value(ir::TypeInner::Scalar(scalar)),
             Self::Frexp => Conclusion::for_frexp_modf(ir::MathFunction::Frexp, size, scalar),
             Self::Modf => Conclusion::for_frexp_modf(ir::MathFunction::Modf, size, scalar),
+            Self::AddCarry | Self::SubBorrow | Self::MulExtended => {
+                let predeclared_size = match size {
+                    ConstructorSize::Scalar => None,
+                    ConstructorSize::Vector(size) => Some(size),
+                    ConstructorSize::Matrix { .. } => unreachable!(),
+                };
+                Conclusion::Predeclared(match self {
+                    Self::AddCarry => ir::PredeclaredType::AddCarryResult {
+                        size: predeclared_size,
+                        scalar,
+                    },
+                    Self::SubBorrow => ir::PredeclaredType::SubBorrowResult {
+                        size: predeclared_size,
+                        scalar,
+                    },
+                    Self::MulExtended => ir::PredeclaredType::MulExtendedResult {
+                        size: predeclared_size,
+                        scalar,
+                    },
+                    _ => unreachable!(),
+                })
+            }
             Self::U32 => Conclusion::Value(ir::TypeInner::Scalar(ir::Scalar::U32)),
             Self::I32 => Conclusion::Value(ir::TypeInner::Scalar(ir::Scalar::I32)),
             Self::Vec2F => Conclusion::Value(ir::TypeInner::Vector {
